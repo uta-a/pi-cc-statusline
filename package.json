@@ -1,0 +1,42 @@
+{
+  "name": "pi-cc-statusline",
+  "version": "0.1.0",
+  "description": "One-line pi footer: model + thinking level · Context N% left · 5h N% left",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uta-a/pi-cc-statusline.git"
+  },
+  "homepage": "https://github.com/uta-a/pi-cc-statusline#readme",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "statusline",
+    "footer",
+    "claude-code",
+    "tui"
+  ],
+  "files": [
+    "extension",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "preview": "node test/preview.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extension/index.ts"
+    ]
+  }
+}
