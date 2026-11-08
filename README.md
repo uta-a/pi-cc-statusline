@@ -9,7 +9,7 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 すべての項目を出した場合
 
 ```
- Opus 5.5 medium · Context 95% left · 5h 81% left · Weekly 63% left · Cache 97% hit · 150 tok/s
+ Opus 5.5 medium · Context 95% left · 5h 81% left · Weekly 63% left · Cache 97% hit · 89 tok/s
 ```
 
 ## 項目
@@ -21,7 +21,7 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 | `5h` | `5h 81% left` | Claude のプランの 5 時間枠の残り |
 | `weekly` | `Weekly 63% left` | Claude のプランの週間枠の残り |
 | `cache` | `Cache 97% hit` | 今のブランチのキャッシュヒット率。`cacheRead ÷ (input + cacheRead + cacheWrite)` |
-| `speed` | `150 tok/s` | 直前の応答の出力速度。最初のトークンが届いてから応答が終わるまでで測る |
+| `speed` | `89 tok/s` | 直近 5 応答の出力速度。出力トークンの合計 ÷ 所要時間（リクエスト開始〜応答終了）の合計 |
 
 初期値は `model` `context` `5h` の 3 つです。
 
@@ -29,7 +29,7 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 - 残量の項目は、残りが 20% 以下で theme の `warning`、10% 以下で `error` の色に変わる
 - `5h` と `weekly` の値は最後に読んだものを保存し、次のセッションでは最初の応答を待たずに表示する。リセット時刻を過ぎた値は 100% として扱う
 - 値がまだ分からない項目（Anthropic 以外のプロバイダーでの `5h` など）は表示しない
-- セッションを再開した直後の `speed` は、保存された応答時間（最初のトークンまでの待ちを含む）から計算するので、実際より低めに出る
+- `speed` の所要時間は最初のトークンまでの待ちを含むので、純粋な生成速度よりやや低めに出る。delta の届いた時刻で測らないのは、Claude Code が delta を最後にまとめて送ることがあり、数百 tok/s のような過大な値になるため
 
 ## 設定（/statusline）
 
@@ -78,7 +78,7 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 pi install git:github.com/uta-a/pi-cc-statusline
 ```
 
-バージョンを固定する場合は `pi install git:github.com/uta-a/pi-cc-statusline@v0.2.0`。更新は `pi update --extensions`。
+バージョンを固定する場合は `pi install git:github.com/uta-a/pi-cc-statusline@v0.2.1`。更新は `pi update --extensions`。
 
 一度だけ試す場合は、clone して `pi -e ./extension/index.ts`。
 

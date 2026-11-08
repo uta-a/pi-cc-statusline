@@ -1,6 +1,6 @@
 {
   "name": "pi-cc-statusline",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Configurable one-line pi footer: model · Context left · 5h / weekly plan left · cache hit rate · tok/s",
   "type": "module",
   "license": "MIT",

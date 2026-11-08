@@ -12,7 +12,7 @@ import {
 	renderStatus,
 	SEGMENTS,
 	type ThemeLike,
-	tokensPerSecond,
+	SpeedMeter,
 	windowLeft,
 } from "../extension/statusline.ts";
 
@@ -93,9 +93,22 @@ test("cache hit rate and speed", () => {
 	stats.add({ input: 0, cacheRead: 9000, cacheWrite: 0 });
 	stats.add(undefined);
 	assert.equal(stats.hitRate, 0.9);
-	assert.equal(tokensPerSecond({ output: 279 }, 4949)?.toFixed(1), "56.4");
-	assert.equal(tokensPerSecond({ output: 279 }, undefined), undefined);
-	assert.equal(tokensPerSecond({ output: 0 }, 1000), undefined);
+
+	const speed = new SpeedMeter(3);
+	const rate = () => speed.tokensPerSecond?.toFixed(1);
+	assert.equal(rate(), undefined);
+	speed.add({ output: 279 }, 4949);
+	assert.equal(rate(), "56.4");
+	speed.add({ output: 279 }, undefined);
+	speed.add({ output: 0 }, 1000);
+	assert.equal(rate(), "56.4");
+	// A one-word reply barely moves the total
+	speed.add({ output: 4 }, 2000);
+	assert.equal(rate(), "40.7");
+	// Only the last three responses count
+	speed.add({ output: 1000 }, 10000);
+	speed.add({ output: 1000 }, 10000);
+	assert.equal(rate(), "91.1");
 });
 
 test("config files", () => {

@@ -4,7 +4,7 @@
  *   Opus 5.5 medium · Context 95% left · 5h 81% left
  *
  * - Segments: model + thinking level, context left, 5h / weekly plan usage left,
- *   cache hit rate of the session, output speed of the last response
+ *   cache hit rate of the session, output speed over the recent responses
  * - /statusline picks the segments and their order; saved to pi-cc-statusline.json
  * - Plan usage comes from the anthropic-ratelimit-unified-{5h,7d}-* response headers,
  *   which both the built-in Anthropic provider and pi-claude-bridge supply
@@ -27,7 +27,7 @@ import {
 	type Segment,
 	type StatusInput,
 	type ThemeLike,
-	tokensPerSecond,
+	SpeedMeter,
 	type UsageLike,
 } from "./statusline.ts";
 
@@ -58,20 +58,19 @@ export default function (pi: ExtensionAPI) {
 	let segments = loadSegments(agentDir);
 	const usage = loadUsageCache(agentDir);
 	let cache = new CacheStats();
-	let speed: number | undefined;
+	let speed = new SpeedMeter();
 	let requestRender: (() => void) | undefined;
 
-	// History only has durationMs, which includes the wait for the first token
-	const take = (message: AssistantLike, streamMs?: number) => {
+	const take = (message: AssistantLike) => {
 		if (message.role !== "assistant") return;
 		cache.add(message.usage);
-		speed = tokensPerSecond(message.usage, streamMs ?? message.durationMs) ?? speed;
+		speed.add(message.usage, message.durationMs);
 	};
 
 	// Cache totals and speed follow the current branch
 	const reconstruct = (ctx: ExtensionContext) => {
 		cache = new CacheStats();
-		speed = undefined;
+		speed = new SpeedMeter();
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "message") take(entry.message as AssistantLike);
 		}
@@ -84,7 +83,7 @@ export default function (pi: ExtensionAPI) {
 		fiveHour: usage.fiveHour,
 		weekly: usage.weekly,
 		cacheHit: cache.hitRate,
-		tokensPerSecond: speed,
+		tokensPerSecond: speed.tokensPerSecond,
 	});
 
 	pi.on("after_provider_response", async (event) => {
@@ -97,18 +96,8 @@ export default function (pi: ExtensionAPI) {
 		requestRender?.();
 	});
 
-	// Live responses are timed from the first streamed delta, so speed excludes time to first token
-	let firstDeltaAt: number | undefined;
-	pi.on("message_start", async () => {
-		firstDeltaAt = undefined;
-	});
-	pi.on("message_update", async (event) => {
-		if (firstDeltaAt === undefined && event.assistantMessageEvent.type.endsWith("_delta")) firstDeltaAt = performance.now();
-	});
 	pi.on("message_end", async (event) => {
-		const streamMs = firstDeltaAt === undefined ? undefined : performance.now() - firstDeltaAt;
-		firstDeltaAt = undefined;
-		take(event.message as AssistantLike, streamMs);
+		take(event.message as AssistantLike);
 		requestRender?.();
 	});
 

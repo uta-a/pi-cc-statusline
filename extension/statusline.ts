@@ -40,7 +40,7 @@ export interface StatusInput {
 	weekly?: WindowUsage;
 	/** Share of prompt tokens read from cache, 0..1 */
 	cacheHit?: number;
-	/** Output tokens per second of the last response */
+	/** Output tokens per second over the recent responses */
 	tokensPerSecond?: number;
 	/** Milliseconds; injectable for tests */
 	now?: number;
@@ -131,11 +131,39 @@ export class CacheStats {
 	}
 }
 
-/** Output speed of a response; undefined when it is too short to measure. */
-export function tokensPerSecond(usage: UsageLike | undefined, durationMs: number | undefined): number | undefined {
-	const output = usage?.output ?? 0;
-	if (!durationMs || durationMs < 100 || output <= 0) return undefined;
-	return output / (durationMs / 1000);
+/**
+ * Output speed over the last few responses: total output / total duration.
+ *
+ * Duration runs from the request start to the end of the response, so it includes the
+ * wait for the first token. Timing the streamed deltas instead overstates the speed:
+ * Claude Code can deliver a whole response's deltas in one burst at the end, and its
+ * summarized thinking bills full thinking tokens while streaming only the summary.
+ * Summing several responses keeps a one-word reply from dragging the value down.
+ */
+export class SpeedMeter {
+	private readonly size: number;
+	private samples: { output: number; durationMs: number }[] = [];
+
+	constructor(size = 5) {
+		this.size = size;
+	}
+
+	add(usage: UsageLike | undefined, durationMs: number | undefined): void {
+		const output = usage?.output ?? 0;
+		if (!durationMs || durationMs <= 0 || output <= 0) return;
+		this.samples.push({ output, durationMs });
+		if (this.samples.length > this.size) this.samples.shift();
+	}
+
+	get tokensPerSecond(): number | undefined {
+		let output = 0;
+		let ms = 0;
+		for (const s of this.samples) {
+			output += s.output;
+			ms += s.durationMs;
+		}
+		return ms > 0 ? output / (ms / 1000) : undefined;
+	}
 }
 
 /** Low values switch to the theme's warning/error colors. */
