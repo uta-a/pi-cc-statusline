@@ -4,15 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-	adoptLegacyUsage,
 	loadSegments,
 	loadUsageCache,
 	normalizeSegments,
 	saveSegments,
 	saveUsageCache,
-	UNKNOWN_PROVIDER,
 } from "../extension/config.ts";
 import { SegmentEditor } from "../extension/settings.ts";
+import { parseOpenCodeGoUsage } from "../extension/usage.ts";
 import {
 	CacheStats,
 	displayModelName,
@@ -149,6 +148,7 @@ test("plan usage is kept per provider", () => {
 	writeFileSync(
 		join(dir, "pi-cc-statusline-cache.json"),
 		JSON.stringify({
+			version: 2,
 			providers: {
 				empty: {},
 				broken: { fiveHour: { utilization: "n/a" }, weekly: { utilization: 0.4 } },
@@ -161,30 +161,18 @@ test("plan usage is kept per provider", () => {
 	});
 });
 
-test("the provider-less v0.2 cache goes to the startup provider", () => {
+test("a cache without the current shape is dropped, not guessed", () => {
 	const dir = mkdtempSync(join(tmpdir(), "cc-statusline-"));
-	writeFileSync(
-		join(dir, "pi-cc-statusline-cache.json"),
-		JSON.stringify({ fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } }),
-	);
-	const usage = loadUsageCache(dir);
-	assert.deepEqual(usage.providers[UNKNOWN_PROVIDER], {
-		fiveHour: { utilization: 0.2, resetsAt: 1 },
-		weekly: { utilization: 0.5 },
-	});
-
-	// Nothing to adopt when the provider is unknown yet
-	assert.equal(adoptLegacyUsage(usage, undefined), false);
-	assert.ok(usage.providers[UNKNOWN_PROVIDER]);
-
-	assert.equal(adoptLegacyUsage(usage, "claude-bridge"), true);
-	assert.deepEqual(usage.providers, {
-		"claude-bridge": { fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } },
-	});
-	assert.equal(adoptLegacyUsage(usage, "anthropic"), false);
-
-	saveUsageCache(dir, usage);
-	assert.deepEqual(loadUsageCache(dir).providers, usage.providers);
+	const path = join(dir, "pi-cc-statusline-cache.json");
+	// v0.2.x: one pair with no provider, so it cannot be attributed
+	writeFileSync(path, JSON.stringify({ fiveHour: { utilization: 0.2 }, weekly: { utilization: 0.5 } }));
+	assert.deepEqual(loadUsageCache(dir), { providers: {} });
+	// Entries without the version are as unattributable as the flat pair
+	writeFileSync(path, JSON.stringify({ providers: { "claude-bridge": { fiveHour: { utilization: 0.2 } } } }));
+	assert.deepEqual(loadUsageCache(dir), { providers: {} });
+	// Saving rewrites the file in the current shape
+	saveUsageCache(dir, { providers: { "claude-bridge": { fiveHour: { utilization: 0.2 } } } });
+	assert.deepEqual(loadUsageCache(dir), { providers: { "claude-bridge": { fiveHour: { utilization: 0.2 } } } });
 });
 
 test("editor toggles and reorders", () => {
@@ -217,4 +205,26 @@ test("editor numbers the shown segments", () => {
 	assert.ok(lines.includes("   ☑ 2 model    モデルと思考レベル"));
 	assert.ok(lines.includes("   ☐   context  コンテキスト残量"));
 	assert.ok(lines.includes(" Preview 5h,model"));
+});
+
+test("opencode-go usage endpoint windows become plan usage", () => {
+	const body = {
+		usage: {
+			rolling: { status: "ok", percent: 1, resetsAt: "2026-11-09T22:17:19.000Z" },
+			weekly: { status: "ok", percent: 0, resetsAt: "2026-11-16T00:00:00.000Z" },
+			monthly: { status: "ok", percent: 5, resetsAt: "2026-11-27T06:48:36.000Z" },
+		},
+	};
+	assert.deepEqual(parseOpenCodeGoUsage(body), {
+		fiveHour: { utilization: 0.01, resetsAt: 1794262639 },
+		weekly: { utilization: 0, resetsAt: 1794787200 },
+	});
+	// A window without a reset time still counts
+	assert.deepEqual(parseOpenCodeGoUsage({ usage: { rolling: { percent: 100 } } }), {
+		fiveHour: { utilization: 1 },
+	});
+	// Unknown shapes and non-numbers are ignored
+	assert.equal(parseOpenCodeGoUsage({}), undefined);
+	assert.equal(parseOpenCodeGoUsage({ usage: { rolling: { percent: "n/a" } } }), undefined);
+	assert.equal(parseOpenCodeGoUsage({ usage: { monthly: { percent: 5 } } }), undefined);
 });

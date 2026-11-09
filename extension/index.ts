@@ -8,8 +8,11 @@
  * - /statusline picks the segments and their order; saved to pi-cc-statusline.json
  * - Plan usage comes from the anthropic-ratelimit-unified-{5h,7d}-* response headers,
  *   which both the built-in Anthropic provider and pi-claude-bridge supply
+ * - Providers without those headers (opencode-go) answer their own usage endpoint
  * - Plan usage is kept per provider, and the line shows only the main model's
  *   provider, so another provider's windows never take over the line
+ * - Headers carry no provider, so a response's plan usage is stored once its
+ *   message names the provider that answered
  * - The last plan usage is cached on disk so a new session shows it right away
  * - Extension statuses (setStatus) keep showing on a second line
  * - Installs after the other session_start handlers, so it replaces their footers too
@@ -18,15 +21,13 @@
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import {
-	adoptLegacyUsage,
 	loadSegments,
 	loadUsageCache,
 	normalizeSegments,
 	saveSegments,
 	saveUsageCache,
 } from "./config.ts";
-import { SegmentEditor } from "./settings.ts";
-import {
+import { SegmentEditor } from "./settings.ts";import {
 	CacheStats,
 	DEFAULT_SEGMENTS,
 	parseWindow,
@@ -38,7 +39,9 @@ import {
 	type ThemeLike,
 	SpeedMeter,
 	type UsageLike,
+	type WindowUsage,
 } from "./statusline.ts";
+import { fetchPlanUsage, USAGE_ENDPOINTS } from "./usage.ts";
 
 const isSubagentChild = () => process.env.PI_SUBAGENT_CHILD === "1" || Boolean(process.env.PI_SUBAGENT_PARENT_SESSION);
 
@@ -56,9 +59,13 @@ const PREVIEW_SAMPLE: StatusInput = {
 
 interface AssistantLike {
 	role: string;
+	provider?: string;
 	usage?: UsageLike;
 	durationMs?: number;
 }
+
+/** How long plan usage waits for the message that names the provider that reported it. */
+const PENDING_TTL_MS = 60_000;
 
 export default function (pi: ExtensionAPI) {
 	if (isSubagentChild()) return;
@@ -85,14 +92,22 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	// The main model picks the provider whose plan usage the line shows
-	const planUsage = (ctx: ExtensionContext) => {
-		const provider = ctx.model?.provider;
-		return provider ? usage.providers[provider] : undefined;
+	// The main model picks the provider whose plan usage the line shows. A virtual
+	// model routes every request to a physical one, and its responses name the real provider.
+	const mainProvider = (ctx: ExtensionContext): string | undefined => {
+		const model = ctx.model;
+		if (!model?.provider) return undefined;
+		if (model.api !== "pi-virtual") return model.provider;
+		for (const entry of ctx.sessionManager.getBranch().toReversed()) {
+			const message = entry.type === "message" ? (entry.message as AssistantLike) : undefined;
+			if (message?.role === "assistant" && message.provider) return message.provider;
+		}
+		return model.provider;
 	};
 
 	const statusInput = (ctx: ExtensionContext): StatusInput => {
-		const plan = planUsage(ctx);
+		const provider = mainProvider(ctx);
+		const plan = provider ? usage.providers[provider] : undefined;
 		return {
 			model: ctx.model,
 			thinkingLevel: pi.getThinkingLevel(),
@@ -104,22 +119,68 @@ export default function (pi: ExtensionAPI) {
 		};
 	};
 
-	pi.on("after_provider_response", async (event, ctx) => {
-		const fiveHour = parseWindow(event.headers, "5h");
-		const weekly = parseWindow(event.headers, "7d");
-		if (!fiveHour && !weekly) return;
-		const provider = ctx.model?.provider;
-		if (!provider) return;
-		const entry = (usage.providers[provider] ??= {});
+	// Providers that publish plan usage on an endpoint (opencode-go) report nothing in
+	// their headers, so ask their endpoint on session start, model switch and after a turn.
+	const FETCH_INTERVAL_MS = 30_000;
+	let fetching = false;
+	let fetchedAt = 0;
+
+	const refreshPlanUsage = async (ctx: ExtensionContext) => {
+		const provider = mainProvider(ctx);
+		if (!provider || !USAGE_ENDPOINTS[provider] || fetching || Date.now() - fetchedAt < FETCH_INTERVAL_MS) return;
+		fetching = true;
+		fetchedAt = Date.now();
+		try {
+			const apiKey = await ctx.modelRegistry.getApiKeyForProvider(provider);
+			const plan = apiKey ? await fetchPlanUsage(provider, apiKey) : undefined;
+			if (!plan) return;
+			const entry = (usage.providers[provider] ??= {});
+			if (plan.fiveHour) entry.fiveHour = plan.fiveHour;
+			if (plan.weekly) entry.weekly = plan.weekly;
+			saveUsageCache(agentDir, usage);
+			requestRender?.();
+		} catch {
+			// An unreachable endpoint leaves the last known values in place
+		} finally {
+			fetching = false;
+		}
+	};
+
+	// Response headers do not say which provider sent them, so hold them until the
+	// message that follows names its provider. A model switch mid-response must not
+	// file one provider's windows under another.
+	let pending: { fiveHour?: WindowUsage; weekly?: WindowUsage; at: number } | undefined;
+
+	const commitPlan = (message: AssistantLike | undefined) => {
+		if (!pending || message?.role !== "assistant" || !message.provider) return;
+		if (Date.now() - pending.at > PENDING_TTL_MS) {
+			pending = undefined;
+			return;
+		}
+		const { fiveHour, weekly } = pending;
+		pending = undefined;
+		const entry = (usage.providers[message.provider] ??= {});
 		if (fiveHour) entry.fiveHour = fiveHour;
 		if (weekly) entry.weekly = weekly;
 		saveUsageCache(agentDir, usage);
 		requestRender?.();
+	};
+
+	pi.on("after_provider_response", async (event) => {
+		const fiveHour = parseWindow(event.headers, "5h");
+		const weekly = parseWindow(event.headers, "7d");
+		if (!fiveHour && !weekly) return;
+		pending = { fiveHour, weekly, at: Date.now() };
 	});
 
-	pi.on("message_end", async (event) => {
+	pi.on("message_start", async (event) => commitPlan(event.message as AssistantLike));
+
+	pi.on("message_end", async (event, ctx) => {
 		take(event.message as AssistantLike);
+		// claude-bridge can report held rate limits mid-stream, after message_start
+		commitPlan(event.message as AssistantLike);
 		requestRender?.();
+		void refreshPlanUsage(ctx);
 	});
 
 	const install = (ctx: ExtensionContext) => {
@@ -151,7 +212,7 @@ export default function (pi: ExtensionAPI) {
 	// session_start too. Waiting for the next macrotask lets every handler run first.
 	pi.on("session_start", async (_event, ctx) => {
 		reconstruct(ctx);
-		if (adoptLegacyUsage(usage, ctx.model?.provider)) saveUsageCache(agentDir, usage);
+		void refreshPlanUsage(ctx);
 		setTimeout(() => install(ctx), 0);
 	});
 	pi.on("session_tree", async (_event, ctx) => {
@@ -159,7 +220,11 @@ export default function (pi: ExtensionAPI) {
 		requestRender?.();
 	});
 	// Switching models switches the provider the plan usage comes from
-	pi.on("model_select", async () => requestRender?.());
+	pi.on("model_select", async (_event, ctx) => {
+		fetchedAt = 0;
+		requestRender?.();
+		void refreshPlanUsage(ctx);
+	});
 
 	const apply = (next: Segment[]) => {
 		segments = next;

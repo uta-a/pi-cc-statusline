@@ -1,11 +1,13 @@
 /**
  * Files under the pi agent dir:
  *   pi-cc-statusline-settings.json  { "segments": [...] }  — what to show, in order
- *   pi-cc-statusline-cache.json     { "providers": { "<provider>": { fiveHour, weekly } } }
+ *   pi-cc-statusline-cache.json     { "version": 2, "providers": { "<provider>": { fiveHour, weekly } } }
  *
  * Plan usage is kept per provider, so the line only shows the windows of the
- * main model's provider. v0.2.1 stored a single pair without a provider; that
- * shape is read as UNKNOWN_PROVIDER and adopted at startup.
+ * main model's provider. Only values a provider actually reported are stored:
+ * files without CACHE_VERSION are ignored, because v0.2.x wrote one pair without
+ * any provider and guessing its owner once painted Claude's numbers onto
+ * unrelated providers. Those values come back with the provider's next response.
  * v0.1.0 kept the 5h cache in pi-cc-statusline.json; that file is no longer read.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -14,6 +16,9 @@ import { DEFAULT_SEGMENTS, isSegment, type Segment, type WindowUsage } from "./s
 
 const SETTINGS_FILE = "pi-cc-statusline-settings.json";
 const CACHE_FILE = "pi-cc-statusline-cache.json";
+
+/** Bumped whenever the cache shape changes, so a stale file is dropped instead of misread. */
+const CACHE_VERSION = 2;
 
 /** Plan usage of one provider. */
 export interface ProviderUsage {
@@ -25,9 +30,6 @@ export interface UsageCache {
 	/** Provider id → the last plan usage seen from that provider */
 	providers: Record<string, ProviderUsage>;
 }
-
-/** Key for the provider-less pair that v0.2.x wrote; see adoptLegacyUsage. */
-export const UNKNOWN_PROVIDER = "";
 
 const readJson = (path: string): Record<string, unknown> | undefined => {
 	try {
@@ -71,34 +73,18 @@ export function loadUsageCache(agentDir: string): UsageCache {
 	const data = readJson(join(agentDir, CACHE_FILE));
 	const providers: Record<string, ProviderUsage> = {};
 	const stored = data?.providers;
-	if (stored && typeof stored === "object") {
-		for (const [provider, value] of Object.entries(stored as Record<string, unknown>)) {
-			const usage = asProviderUsage(value);
-			if (usage) providers[provider] = usage;
-		}
-	} else {
-		const legacy = asProviderUsage(data);
-		if (legacy) providers[UNKNOWN_PROVIDER] = legacy;
+	if (data?.version !== CACHE_VERSION || !stored || typeof stored !== "object") return { providers };
+	for (const [provider, value] of Object.entries(stored as Record<string, unknown>)) {
+		const usage = asProviderUsage(value);
+		if (usage) providers[provider] = usage;
 	}
 	return { providers };
 }
 
 export function saveUsageCache(agentDir: string, cache: UsageCache): void {
 	try {
-		writeJson(join(agentDir, CACHE_FILE), cache);
+		writeJson(join(agentDir, CACHE_FILE), { version: CACHE_VERSION, providers: cache.providers });
 	} catch {
 		// The cache only saves a request's wait on startup; losing it is harmless
 	}
-}
-
-/**
- * v0.2.x could not tell providers apart, so give its pair to the provider of the
- * model the session starts with. Returns whether the cache changed.
- */
-export function adoptLegacyUsage(cache: UsageCache, provider: string | undefined): boolean {
-	const legacy = cache.providers[UNKNOWN_PROVIDER];
-	if (!legacy || !provider) return false;
-	delete cache.providers[UNKNOWN_PROVIDER];
-	cache.providers[provider] = { ...legacy, ...cache.providers[provider] };
-	return true;
 }
