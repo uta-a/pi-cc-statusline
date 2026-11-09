@@ -40,7 +40,7 @@ const full = {
 test("draws the reference line by default", () => {
 	const line = renderStatus(full, tagged);
 	assert.equal(strip(line), "Opus 5.5 medium · Context 95% left · 5h 81% left");
-	assert.ok(line.startsWith("<dim>Opus 5.5 medium</dim>"));
+	assert.ok(line.startsWith("\x1b[38;2;181;181;181mOpus 5.5 medium"));
 	assert.ok(line.includes("\x1b[38;2;131;190;178mContext 95% left"));
 	assert.ok(line.includes("\x1b[38;2;188;153;212m5h 81% left"));
 });
@@ -63,6 +63,16 @@ test("low values switch to warning and error", () => {
 	assert.ok(renderStatus({ contextPercent: 85 }, tagged).includes("<warning>Context 15% left</warning>"));
 	assert.ok(renderStatus({ fiveHour: { utilization: 0.95 } }, tagged).includes("<error>5h 5% left</error>"));
 	assert.ok(renderStatus({ weekly: { utilization: 0.85 } }, tagged, ["weekly"]).includes("<warning>Weekly 15% left</warning>"));
+});
+
+test("branch is blue, marks dirty worktrees and follows segment order", () => {
+	const input = { ...full, branch: "main", gitDirty: true };
+	const line = renderStatus(input, tagged);
+	assert.equal(strip(line), "Opus 5.5 medium · main* · Context 95% left · 5h 81% left");
+	assert.ok(line.includes("\x1b[38;2;122;162;214mmain*"));
+	assert.equal(strip(renderStatus({ branch: "feature/test", gitDirty: false }, tagged, ["branch"])), "feature/test");
+	assert.equal(renderStatus({ gitDirty: true }, tagged, ["branch"]), "");
+	assert.equal(strip(renderStatus(input, tagged, ["branch", "model"])), "main* · Opus 5.5 medium");
 });
 
 test("model names", () => {
@@ -120,11 +130,11 @@ test("cache hit rate and speed", () => {
 
 test("config files", () => {
 	const dir = mkdtempSync(join(tmpdir(), "cc-statusline-"));
-	assert.deepEqual(loadSegments(dir), ["model", "context", "5h"]);
+	assert.deepEqual(loadSegments(dir), ["model", "branch", "context", "5h"]);
 	saveSegments(dir, ["cache", "model"]);
 	assert.deepEqual(loadSegments(dir), ["cache", "model"]);
 	writeFileSync(join(dir, "pi-cc-statusline-settings.json"), "{ broken");
-	assert.deepEqual(loadSegments(dir), ["model", "context", "5h"]);
+	assert.deepEqual(loadSegments(dir), ["model", "branch", "context", "5h"]);
 	assert.deepEqual(normalizeSegments(["5h", "bogus", "5h", "model"]), ["5h", "model"]);
 
 	assert.deepEqual(loadUsageCache(dir), { providers: {} });
@@ -179,7 +189,7 @@ test("editor toggles and reorders", () => {
 	const editor = new SegmentEditor(["model", "context", "5h"]);
 	assert.deepEqual(
 		editor.items.map((i) => `${i.enabled ? "+" : "-"}${i.segment}`),
-		["+model", "+context", "+5h", "-weekly", "-cache", "-speed"],
+		["+model", "+context", "+5h", "-weekly", "-cache", "-speed", "-branch"],
 	);
 	editor.cursor = 4; // cache
 	editor.toggle();
@@ -193,9 +203,9 @@ test("editor toggles and reorders", () => {
 	editor.move(-1); // already at the top
 	assert.deepEqual(editor.segments, ["cache", "context", "5h"]);
 	editor.up();
-	assert.equal(editor.cursor, 5);
+	assert.equal(editor.cursor, 6);
 	editor.reset();
-	assert.deepEqual(editor.segments, ["model", "context", "5h"]);
+	assert.deepEqual(editor.segments, ["model", "branch", "context", "5h"]);
 });
 
 test("editor numbers the shown segments", () => {

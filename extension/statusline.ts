@@ -7,13 +7,14 @@ export interface ThemeLike {
 	fg(color: string, text: string): string;
 }
 
-export const SEGMENTS = ["model", "context", "5h", "weekly", "cache", "speed"] as const;
+export const SEGMENTS = ["model", "context", "5h", "weekly", "cache", "speed", "branch"] as const;
 export type Segment = (typeof SEGMENTS)[number];
 
-export const DEFAULT_SEGMENTS: readonly Segment[] = ["model", "context", "5h"];
+export const DEFAULT_SEGMENTS: readonly Segment[] = ["model", "branch", "context", "5h"];
 
 export const SEGMENT_LABELS: Record<Segment, string> = {
 	model: "モデルと思考レベル",
+	branch: "Git ブランチ（未コミット時 *）",
 	context: "コンテキスト残量",
 	"5h": "5 時間枠の残量",
 	weekly: "週間枠の残量",
@@ -34,6 +35,8 @@ export interface WindowUsage {
 export interface StatusInput {
 	model?: { id: string; name?: string; reasoning?: boolean };
 	thinkingLevel?: string;
+	branch?: string;
+	gitDirty?: boolean;
 	/** Context used, 0..100, or null/undefined when unknown */
 	contextPercent?: number | null;
 	fiveHour?: WindowUsage;
@@ -46,8 +49,10 @@ export interface StatusInput {
 	now?: number;
 }
 
-// Sampled from the reference screenshot; the model part uses the theme's dim
-const COLORS: Record<Exclude<Segment, "model">, readonly number[]> = {
+// Muted colors, with the model slightly brighter than the separators.
+const COLORS: Record<Segment, readonly number[]> = {
+	model: [0xb5, 0xb5, 0xb5],
+	branch: [0x7a, 0xa2, 0xd6],
 	context: [0x83, 0xbe, 0xb2],
 	"5h": [0xbc, 0x99, 0xd4],
 	weekly: [0xd4, 0x9f, 0xb6],
@@ -179,7 +184,11 @@ function renderSegment(segment: Segment, input: StatusInput, theme: ThemeLike): 
 			if (!input.model) return undefined;
 			let label = displayModelName(input.model);
 			if (input.model.reasoning !== false && input.thinkingLevel) label += ` ${input.thinkingLevel}`;
-			return theme.fg("dim", label);
+			return rgb(COLORS.model, label);
+		}
+		case "branch": {
+			if (!input.branch) return undefined;
+			return rgb(COLORS.branch, `${input.branch}${input.gitDirty ? "*" : ""}`);
 		}
 		case "context": {
 			if (typeof input.contextPercent !== "number") return undefined;

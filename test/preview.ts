@@ -19,6 +19,7 @@ const opus = { id: "claude-opus-5-5", name: "Claude Opus 5.5 1M", reasoning: tru
 const full: StatusInput = {
 	model: opus,
 	thinkingLevel: "medium",
+	branch: "main",
 	contextPercent: 5,
 	fiveHour: { utilization: 0.19 },
 	weekly: { utilization: 0.37 },
@@ -28,6 +29,7 @@ const full: StatusInput = {
 
 const samples: Record<string, [StatusInput, Segment[]?]> = {
 	reference: [full],
+	"uncommitted changes": [{ ...full, gitDirty: true }],
 	"all segments": [full, [...SEGMENTS]],
 	reordered: [full, ["model", "speed", "cache", "weekly"]],
 	"before first response": [{ model: opus, thinkingLevel: "high", contextPercent: 0 }, [...SEGMENTS]],

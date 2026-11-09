@@ -27,7 +27,9 @@ import {
 	saveSegments,
 	saveUsageCache,
 } from "./config.ts";
-import { SegmentEditor } from "./settings.ts";import {
+import { SegmentEditor } from "./settings.ts";
+import { readGitState, type GitState } from "./git.ts";
+import {
 	CacheStats,
 	DEFAULT_SEGMENTS,
 	parseWindow,
@@ -50,6 +52,7 @@ const sanitize = (text: string) => text.replace(/[\r\n\t]+/g, " ").trim();
 
 // Stand-ins so the /statusline preview shows segments that have no data yet
 const PREVIEW_SAMPLE: StatusInput = {
+	branch: "main",
 	contextPercent: 5,
 	fiveHour: { utilization: 0.19 },
 	weekly: { utilization: 0.37 },
@@ -76,6 +79,7 @@ export default function (pi: ExtensionAPI) {
 	let cache = new CacheStats();
 	let speed = new SpeedMeter();
 	let requestRender: (() => void) | undefined;
+	let git: GitState = { dirty: false };
 
 	const take = (message: AssistantLike) => {
 		if (message.role !== "assistant") return;
@@ -111,6 +115,8 @@ export default function (pi: ExtensionAPI) {
 		return {
 			model: ctx.model,
 			thinkingLevel: pi.getThinkingLevel(),
+			branch: git.branch,
+			gitDirty: git.dirty,
 			contextPercent: ctx.getContextUsage()?.percent,
 			fiveHour: plan?.fiveHour,
 			weekly: plan?.weekly,
@@ -185,8 +191,29 @@ export default function (pi: ExtensionAPI) {
 		if (ctx.mode !== "tui") return;
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
+			let disposed = false;
+			let checking = false;
+			const refreshGit = async () => {
+				if (checking || !segments.includes("branch")) return;
+				checking = true;
+				try {
+					const next = await readGitState(ctx.cwd);
+					if (disposed) return;
+					if (next.branch !== git.branch || next.dirty !== git.dirty) {
+						git = next;
+						tui.requestRender();
+					}
+				} finally {
+					checking = false;
+				}
+			};
+			void refreshGit();
+			const timer = setInterval(() => void refreshGit(), 2_000);
+			timer.unref();
 			return {
 				dispose() {
+					disposed = true;
+					clearInterval(timer);
 					requestRender = undefined;
 				},
 				invalidate() {},

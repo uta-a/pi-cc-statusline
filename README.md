@@ -3,13 +3,13 @@
 pi のフッターを、次の 1 行のステータスラインに置き換える pi 拡張です。
 
 ```
- Opus 5.5 medium · Context 95% left · 5h 81% left
+ Opus 5.5 medium · main* · Context 95% left · 5h 81% left
 ```
 
 すべての項目を出した場合
 
 ```
- Opus 5.5 medium · Context 95% left · 5h 81% left · Weekly 63% left · Cache 97% hit · 89 tok/s
+ Opus 5.5 medium · main* · Context 95% left · 5h 81% left · Weekly 63% left · Cache 97% hit · 89 tok/s
 ```
 
 ## 項目
@@ -17,13 +17,17 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 | 名前 | 表示 | 内容 |
 |---|---|---|
 | `model` | `Opus 5.5 medium` | モデル名と思考レベル。`Claude Opus 5.5 1M` は `Opus 5.5` のように縮める。思考に対応しないモデルでは思考レベルを出さない |
+| `branch` | `main*` | Git ブランチ名（青色）。未コミットの変更・未追跡ファイルがある場合は `*`。Git 管理外は非表示、detached HEAD は短縮コミットID |
 | `context` | `Context 95% left` | コンテキストの残り（`ctx.getContextUsage()`） |
 | `5h` | `5h 81% left` | メインモデルのプロバイダーの 5 時間枠の残り |
 | `weekly` | `Weekly 63% left` | メインモデルのプロバイダーの週間枠の残り |
 | `cache` | `Cache 97% hit` | 今のブランチのキャッシュヒット率。`cacheRead ÷ (input + cacheRead + cacheWrite)` |
 | `speed` | `89 tok/s` | 直近 5 応答の出力速度。出力トークンの合計 ÷ 所要時間（リクエスト開始〜応答終了）の合計 |
 
-初期値は `model` `context` `5h` の 3 つです。
+初期値は `model` `branch` `context` `5h` の 4 つです。既存の設定は保持するため、ブランチを追加するには `/statusline` で `branch` を有効にしてください。
+
+- モデル名は明るめのグレー（`#b5b5b5`）、ブランチは青（`#7aa2d6`）で表示する
+- Git 状態は描画を妨げない非同期処理で約 2 秒ごとに確認する
 
 - `5h` と `weekly` は応答ヘッダー `anthropic-ratelimit-unified-{5h,7d}-utilization` / `-reset` から読む。組み込みの Anthropic プロバイダーと pi-claude-bridge のどちらもこのヘッダーを渡す
 - `opencode-go` は `GET https://opencode.ai/zen/go/v1/usage`、`openai-codex`（GPT / ChatGPT プラン）は `GET https://chatgpt.com/backend-api/wham/usage`（いずれも認証付き・読み取りのみ）から枠を取得し、セッション開始時・モデル切替時・応答後に更新する。Codex は期間で 5 時間・週間枠を判別するため、週間枠だけのプランにも対応する。通常の OpenAI API キー課金にはプラン枠を表示しない
@@ -42,13 +46,14 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
  Status line
 
  ❯ ☑ 1 model    モデルと思考レベル
-   ☑ 2 context  コンテキスト残量
-   ☑ 3 5h       5 時間枠の残量
+   ☑ 2 branch   Git ブランチ（未コミット時 *）
+   ☑ 3 context  コンテキスト残量
+   ☑ 4 5h       5 時間枠の残量
    ☐   weekly   週間枠の残量
    ☐   cache    キャッシュヒット率
    ☐   speed    出力速度 (tok/s)
 
- Preview Opus 5.5 medium · Context 95% left · 5h 81% left
+ Preview Opus 5.5 medium · main · Context 95% left · 5h 81% left
 ```
 
 | キー | 操作 |
@@ -63,7 +68,7 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 引数で直接指定もできます（項目名は補完できます）。
 
 ```
-/statusline model context 5h weekly cache speed   # この順で表示
+/statusline model branch context 5h weekly cache speed   # この順で表示
 /statusline reset                                  # 初期値に戻す
 ```
 
