@@ -26,7 +26,7 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 初期値は `model` `context` `5h` の 3 つです。
 
 - `5h` と `weekly` は応答ヘッダー `anthropic-ratelimit-unified-{5h,7d}-utilization` / `-reset` から読む。組み込みの Anthropic プロバイダーと pi-claude-bridge のどちらもこのヘッダーを渡す
-- ヘッダーを渡さないプロバイダーは、そのプロバイダーの usage エンドポイントから読む。`opencode-go` は `GET https://opencode.ai/zen/go/v1/usage`（認証付き・読み取りのみ）から rolling（5 時間）と weekly を取得し、セッション開始時・モデル切替時・応答後に更新する
+- `opencode-go` は `GET https://opencode.ai/zen/go/v1/usage`、`openai-codex`（GPT / ChatGPT プラン）は `GET https://chatgpt.com/backend-api/wham/usage`（いずれも認証付き・読み取りのみ）から枠を取得し、セッション開始時・モデル切替時・応答後に更新する。Codex は期間で 5 時間・週間枠を判別するため、週間枠だけのプランにも対応する。通常の OpenAI API キー課金にはプラン枠を表示しない
 - 残量の項目は、残りが 20% 以下で theme の `warning`、10% 以下で `error` の色に変わる
 - プランの値はプロバイダーごとに分けて保存し、メインモデルのプロバイダーのものだけを表示する。別のプロバイダー（サブエージェントや別モデル）の応答で上書きされない
 - 応答ヘッダーにはプロバイダー名が無いため、ヘッダーはその直後に届くメッセージの `provider` に紐づけて保存する。応答中にモデルを切り替えても、別のプロバイダーの値として記録されない

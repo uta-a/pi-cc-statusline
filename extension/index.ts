@@ -119,8 +119,7 @@ export default function (pi: ExtensionAPI) {
 		};
 	};
 
-	// Providers that publish plan usage on an endpoint (opencode-go) report nothing in
-	// their headers, so ask their endpoint on session start, model switch and after a turn.
+	// Fetch endpoint-based usage (OpenCode Go / Codex) on start, switch and after a turn.
 	const FETCH_INTERVAL_MS = 30_000;
 	let fetching = false;
 	let fetchedAt = 0;
@@ -134,9 +133,8 @@ export default function (pi: ExtensionAPI) {
 			const apiKey = await ctx.modelRegistry.getApiKeyForProvider(provider);
 			const plan = apiKey ? await fetchPlanUsage(provider, apiKey) : undefined;
 			if (!plan) return;
-			const entry = (usage.providers[provider] ??= {});
-			if (plan.fiveHour) entry.fiveHour = plan.fiveHour;
-			if (plan.weekly) entry.weekly = plan.weekly;
+			// Endpoint snapshots are complete; remove windows the plan no longer has.
+			usage.providers[provider] = plan;
 			saveUsageCache(agentDir, usage);
 			requestRender?.();
 		} catch {

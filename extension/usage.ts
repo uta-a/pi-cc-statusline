@@ -1,8 +1,7 @@
 /**
  * Plan usage for providers that publish it on an endpoint instead of in
- * response headers (opencode-go). Called only when the main model's provider
- * has an endpoint and no headers have reported a window yet, so a header-based
- * provider never costs a request.
+ * response headers (opencode-go and openai-codex). Only called for providers
+ * with a known endpoint.
  */
 import type { ProviderUsage } from "./config.ts";
 import type { WindowUsage } from "./statusline.ts";
@@ -12,6 +11,7 @@ const TIMEOUT_MS = 5_000;
 /** Provider id → authenticated, read-only endpoint that returns the plan windows. */
 export const USAGE_ENDPOINTS: Readonly<Record<string, string>> = {
 	"opencode-go": "https://opencode.ai/zen/go/v1/usage",
+	"openai-codex": "https://chatgpt.com/backend-api/wham/usage",
 };
 
 /**
@@ -37,14 +37,51 @@ export function parseOpenCodeGoUsage(body: unknown): ProviderUsage | undefined {
 	return { ...(fiveHour ? { fiveHour } : {}), ...(weekly ? { weekly } : {}) };
 }
 
+/** Codex can return a weekly primary window and no secondary window. */
+export function parseCodexUsage(body: unknown): ProviderUsage | undefined {
+	const rate = (body as { rate_limit?: Record<string, unknown> } | null)?.rate_limit;
+	if (!rate || typeof rate !== "object") return undefined;
+	const plan: ProviderUsage = {};
+	for (const name of ["primary_window", "secondary_window"]) {
+		const raw = rate[name] as {
+			used_percent?: unknown;
+			limit_window_seconds?: unknown;
+			reset_at?: unknown;
+		} | null;
+		if (typeof raw?.used_percent !== "number" || !Number.isFinite(raw.used_percent)) continue;
+		const window: WindowUsage = { utilization: raw.used_percent / 100 };
+		if (typeof raw.reset_at === "number" && Number.isFinite(raw.reset_at)) window.resetsAt = raw.reset_at;
+		if (raw.limit_window_seconds === 18_000) plan.fiveHour = window;
+		else if (raw.limit_window_seconds === 604_800) plan.weekly = window;
+	}
+	return plan.fiveHour || plan.weekly ? plan : undefined;
+}
+
+/** Use the account claim in the runtime's refreshed OAuth access token. */
+function codexAccountId(token: string): string | undefined {
+	try {
+		const payload = JSON.parse(Buffer.from(token.split(".")[1]!, "base64url").toString("utf8"));
+		const id = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+		return typeof id === "string" ? id : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export async function fetchPlanUsage(provider: string, apiKey: string): Promise<ProviderUsage | undefined> {
 	const url = USAGE_ENDPOINTS[provider];
 	if (!url) return undefined;
+	const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+	if (provider === "openai-codex") {
+		const accountId = codexAccountId(apiKey);
+		if (accountId) headers["ChatGPT-Account-Id"] = accountId;
+	}
 	const response = await fetch(url, {
-		headers: { Authorization: `Bearer ${apiKey}` },
+		headers,
 		redirect: "error",
 		signal: AbortSignal.timeout(TIMEOUT_MS),
 	});
 	if (!response.ok) return undefined;
-	return parseOpenCodeGoUsage(await response.json());
+	const body = await response.json();
+	return provider === "openai-codex" ? parseCodexUsage(body) : parseOpenCodeGoUsage(body);
 }
