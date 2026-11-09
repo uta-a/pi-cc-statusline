@@ -3,7 +3,15 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { loadSegments, loadUsageCache, normalizeSegments, saveSegments, saveUsageCache } from "../extension/config.ts";
+import {
+	adoptLegacyUsage,
+	loadSegments,
+	loadUsageCache,
+	normalizeSegments,
+	saveSegments,
+	saveUsageCache,
+	UNKNOWN_PROVIDER,
+} from "../extension/config.ts";
 import { SegmentEditor } from "../extension/settings.ts";
 import {
 	CacheStats,
@@ -120,9 +128,63 @@ test("config files", () => {
 	assert.deepEqual(loadSegments(dir), ["model", "context", "5h"]);
 	assert.deepEqual(normalizeSegments(["5h", "bogus", "5h", "model"]), ["5h", "model"]);
 
-	assert.deepEqual(loadUsageCache(dir), { fiveHour: undefined, weekly: undefined });
-	saveUsageCache(dir, { fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } });
-	assert.deepEqual(loadUsageCache(dir), { fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } });
+	assert.deepEqual(loadUsageCache(dir), { providers: {} });
+	saveUsageCache(dir, {
+		providers: {
+			"claude-bridge": { fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } },
+			anthropic: { fiveHour: { utilization: 0.6 } },
+		},
+	});
+	assert.deepEqual(loadUsageCache(dir), {
+		providers: {
+			"claude-bridge": { fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } },
+			anthropic: { fiveHour: { utilization: 0.6 } },
+		},
+	});
+});
+
+test("plan usage is kept per provider", () => {
+	const dir = mkdtempSync(join(tmpdir(), "cc-statusline-"));
+	// Entries without any window, and broken windows, are dropped
+	writeFileSync(
+		join(dir, "pi-cc-statusline-cache.json"),
+		JSON.stringify({
+			providers: {
+				empty: {},
+				broken: { fiveHour: { utilization: "n/a" }, weekly: { utilization: 0.4 } },
+				good: { fiveHour: { utilization: 0.3 } },
+			},
+		}),
+	);
+	assert.deepEqual(loadUsageCache(dir), {
+		providers: { broken: { weekly: { utilization: 0.4 } }, good: { fiveHour: { utilization: 0.3 } } },
+	});
+});
+
+test("the provider-less v0.2 cache goes to the startup provider", () => {
+	const dir = mkdtempSync(join(tmpdir(), "cc-statusline-"));
+	writeFileSync(
+		join(dir, "pi-cc-statusline-cache.json"),
+		JSON.stringify({ fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } }),
+	);
+	const usage = loadUsageCache(dir);
+	assert.deepEqual(usage.providers[UNKNOWN_PROVIDER], {
+		fiveHour: { utilization: 0.2, resetsAt: 1 },
+		weekly: { utilization: 0.5 },
+	});
+
+	// Nothing to adopt when the provider is unknown yet
+	assert.equal(adoptLegacyUsage(usage, undefined), false);
+	assert.ok(usage.providers[UNKNOWN_PROVIDER]);
+
+	assert.equal(adoptLegacyUsage(usage, "claude-bridge"), true);
+	assert.deepEqual(usage.providers, {
+		"claude-bridge": { fiveHour: { utilization: 0.2, resetsAt: 1 }, weekly: { utilization: 0.5 } },
+	});
+	assert.equal(adoptLegacyUsage(usage, "anthropic"), false);
+
+	saveUsageCache(dir, usage);
+	assert.deepEqual(loadUsageCache(dir).providers, usage.providers);
 });
 
 test("editor toggles and reorders", () => {

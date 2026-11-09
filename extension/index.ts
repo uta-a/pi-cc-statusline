@@ -8,6 +8,8 @@
  * - /statusline picks the segments and their order; saved to pi-cc-statusline.json
  * - Plan usage comes from the anthropic-ratelimit-unified-{5h,7d}-* response headers,
  *   which both the built-in Anthropic provider and pi-claude-bridge supply
+ * - Plan usage is kept per provider, and the line shows only the main model's
+ *   provider, so another provider's windows never take over the line
  * - The last plan usage is cached on disk so a new session shows it right away
  * - Extension statuses (setStatus) keep showing on a second line
  * - Installs after the other session_start handlers, so it replaces their footers too
@@ -15,7 +17,14 @@
  */
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { loadSegments, loadUsageCache, normalizeSegments, saveSegments, saveUsageCache } from "./config.ts";
+import {
+	adoptLegacyUsage,
+	loadSegments,
+	loadUsageCache,
+	normalizeSegments,
+	saveSegments,
+	saveUsageCache,
+} from "./config.ts";
 import { SegmentEditor } from "./settings.ts";
 import {
 	CacheStats,
@@ -76,22 +85,34 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	const statusInput = (ctx: ExtensionContext): StatusInput => ({
-		model: ctx.model,
-		thinkingLevel: pi.getThinkingLevel(),
-		contextPercent: ctx.getContextUsage()?.percent,
-		fiveHour: usage.fiveHour,
-		weekly: usage.weekly,
-		cacheHit: cache.hitRate,
-		tokensPerSecond: speed.tokensPerSecond,
-	});
+	// The main model picks the provider whose plan usage the line shows
+	const planUsage = (ctx: ExtensionContext) => {
+		const provider = ctx.model?.provider;
+		return provider ? usage.providers[provider] : undefined;
+	};
 
-	pi.on("after_provider_response", async (event) => {
+	const statusInput = (ctx: ExtensionContext): StatusInput => {
+		const plan = planUsage(ctx);
+		return {
+			model: ctx.model,
+			thinkingLevel: pi.getThinkingLevel(),
+			contextPercent: ctx.getContextUsage()?.percent,
+			fiveHour: plan?.fiveHour,
+			weekly: plan?.weekly,
+			cacheHit: cache.hitRate,
+			tokensPerSecond: speed.tokensPerSecond,
+		};
+	};
+
+	pi.on("after_provider_response", async (event, ctx) => {
 		const fiveHour = parseWindow(event.headers, "5h");
 		const weekly = parseWindow(event.headers, "7d");
 		if (!fiveHour && !weekly) return;
-		if (fiveHour) usage.fiveHour = fiveHour;
-		if (weekly) usage.weekly = weekly;
+		const provider = ctx.model?.provider;
+		if (!provider) return;
+		const entry = (usage.providers[provider] ??= {});
+		if (fiveHour) entry.fiveHour = fiveHour;
+		if (weekly) entry.weekly = weekly;
 		saveUsageCache(agentDir, usage);
 		requestRender?.();
 	});
@@ -130,12 +151,15 @@ export default function (pi: ExtensionAPI) {
 	// session_start too. Waiting for the next macrotask lets every handler run first.
 	pi.on("session_start", async (_event, ctx) => {
 		reconstruct(ctx);
+		if (adoptLegacyUsage(usage, ctx.model?.provider)) saveUsageCache(agentDir, usage);
 		setTimeout(() => install(ctx), 0);
 	});
 	pi.on("session_tree", async (_event, ctx) => {
 		reconstruct(ctx);
 		requestRender?.();
 	});
+	// Switching models switches the provider the plan usage comes from
+	pi.on("model_select", async () => requestRender?.());
 
 	const apply = (next: Segment[]) => {
 		segments = next;

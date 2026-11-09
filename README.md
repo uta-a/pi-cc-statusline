@@ -27,8 +27,9 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 
 - `5h` と `weekly` は応答ヘッダー `anthropic-ratelimit-unified-{5h,7d}-utilization` / `-reset` から読む。組み込みの Anthropic プロバイダーと pi-claude-bridge のどちらもこのヘッダーを渡す
 - 残量の項目は、残りが 20% 以下で theme の `warning`、10% 以下で `error` の色に変わる
-- `5h` と `weekly` の値は最後に読んだものを保存し、次のセッションでは最初の応答を待たずに表示する。リセット時刻を過ぎた値は 100% として扱う
-- 値がまだ分からない項目（Anthropic 以外のプロバイダーでの `5h` など）は表示しない
+- プランの値はプロバイダーごとに分けて保存し、メインモデルのプロバイダーのものだけを表示する。別のプロバイダー（サブエージェントや別モデル）の応答で上書きされない
+- 値は最後に読んだものを保存し、次のセッションでは最初の応答を待たずに表示する。リセット時刻を過ぎた値は 100% として扱う
+- 値がまだ分からない項目（そのプロバイダーで最初の応答がまだの `5h`、Anthropic 以外のプロバイダーでの `5h` など）は表示しない
 - `speed` の所要時間は最初のトークンまでの待ちを含むので、純粋な生成速度よりやや低めに出る。delta の届いた時刻で測らないのは、Claude Code が delta を最後にまとめて送ることがあり、数百 tok/s のような過大な値になるため
 
 ## 設定（/statusline）
@@ -64,7 +65,7 @@ pi のフッターを、次の 1 行のステータスラインに置き換え�
 /statusline reset                                  # 初期値に戻す
 ```
 
-設定は `~/.pi/agent/pi-cc-statusline-settings.json` に、`5h` と `weekly` の値は `~/.pi/agent/pi-cc-statusline-cache.json` に保存します。
+設定は `~/.pi/agent/pi-cc-statusline-settings.json` に、`5h` と `weekly` の値は `~/.pi/agent/pi-cc-statusline-cache.json` にプロバイダーごとに保存します。
 
 ## その他
 
