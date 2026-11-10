@@ -19,7 +19,7 @@
  * - Does nothing inside pi-subagents children
  */
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	loadSegments,
 	loadUsageCache,
@@ -44,11 +44,9 @@ import {
 	type WindowUsage,
 } from "./statusline.ts";
 import { fetchPlanUsage, USAGE_ENDPOINTS } from "./usage.ts";
+import { extensionStatusRows } from "./status-rows.ts";
 
 const isSubagentChild = () => process.env.PI_SUBAGENT_CHILD === "1" || Boolean(process.env.PI_SUBAGENT_PARENT_SESSION);
-
-// Statuses are free text from other extensions; keep them on one line
-const sanitize = (text: string) => text.replace(/[\r\n\t]+/g, " ").trim();
 
 // Stand-ins so the /statusline preview shows segments that have no data yet
 const PREVIEW_SAMPLE: StatusInput = {
@@ -221,11 +219,13 @@ export default function (pi: ExtensionAPI) {
 					const line = renderStatus(statusInput(ctx), theme as ThemeLike, segments);
 					const lines = [truncateToWidth(` ${line}`, width, "")];
 
-					const statuses = [...footerData.getExtensionStatuses().entries()]
-						.sort(([a], [b]) => a.localeCompare(b))
-						.map(([, text]) => sanitize(text))
-						.filter(Boolean);
-					if (statuses.length > 0) lines.push(truncateToWidth(` ${statuses.join(" ")}`, width, theme.fg("dim", "…")));
+					for (const row of extensionStatusRows(footerData.getExtensionStatuses(), {
+						width: Math.max(0, width - 1),
+						measure: visibleWidth,
+						truncate: (text, columns) => truncateToWidth(text, columns),
+					})) {
+						lines.push(truncateToWidth(` ${row}`, width, theme.fg("dim", "…")));
+					}
 
 					return lines;
 				},
